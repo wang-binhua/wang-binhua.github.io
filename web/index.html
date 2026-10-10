@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Campus Finance</title><link rel="stylesheet" href="/app.css"></head>
+<body class="locked">
+  <section id="authGate" class="auth-gate">
+    <form id="authForm" class="auth-card">
+      <small>仅本机访问 · 加密账本</small>
+      <h1 id="authTitle">校园财务台登录</h1>
+      <p id="authDescription">请输入密码解锁账本。</p>
+      <label id="recoveryLabel" hidden>恢复密钥<input id="recoveryKey" type="password" autocomplete="off"></label>
+      <label id="passwordLabel">登录密码<input id="authPassword" type="password" minlength="12" autocomplete="current-password" required></label>
+      <label id="confirmLabel" hidden>确认密码<input id="authConfirm" type="password" minlength="12" autocomplete="new-password"></label>
+      <button id="authSubmit" class="primary" type="submit">登录</button>
+      <button id="recoverToggle" class="auth-link" type="button">忘记密码？使用恢复密钥</button>
+    </form>
+    <article id="recoveryNotice" class="auth-card" hidden>
+      <h1>请保存恢复密钥</h1>
+      <p>这是忘记密码时找回账本的唯一方式。请复制并妥善保存在安全位置；关闭后不会再次显示。</p>
+      <input id="recoveryDisplay" readonly>
+      <button id="recoveryContinue" class="primary" type="button">我已保存，继续</button>
+    </article>
+  </section>
+  <header><div><small>C17 · SQLCipher · Local-only</small><h1>校园财务台</h1></div><div class="header-actions"><label>月份 <input id="month" type="month"></label><button id="logout" type="button">锁定账本</button></div></header>
+  <main>
+    <section class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"><article>收入<strong id="income">¥0.00</strong></article><article>支出<strong id="expense">¥0.00</strong></article><article>结余<strong id="balance">¥0.00</strong></article><article>预算<strong id="budget">未设置</strong></article><article>目前可支配金额<strong id="availableBalance">¥0.00</strong><button id="setBalance" type="button">设置当前余额</button></article></section>
+    <section class="two"><article class="panel"><h2>新增账目</h2><form id="form"><p><button type="button" data-type="expense" class="on">支出</button><button type="button" data-type="income">收入</button></p><label>日期<input id="date" type="date" required></label><label>类别<select id="category"></select></label><button id="addCategory" type="button">新增自定义类别</button><label>金额<input id="amount" type="number" min="0.01" step="0.01" required></label><label>备注<input id="note" maxlength="180"></label><button class="primary">保存</button></form></article><article class="panel"><h2>支出构成</h2><div id="bar"></div><div id="stats"></div></article></section>
+    <article class="panel"><div class="toolbar"><h2>账目明细</h2><button id="download" type="button">导出本月 CSV</button></div><p id="editHint" class="hint"></p><table><thead><tr><th>日期</th><th>类型</th><th>类别</th><th>备注</th><th>金额</th><th></th></tr></thead><tbody id="rows"></tbody></table></article>
+    <article class="panel"><h2>分类预算</h2><div id="budgets"></div><button id="save" class="primary">保存预算</button></article>
+  </main><script src="/app.js"></script>
+</body></html>
