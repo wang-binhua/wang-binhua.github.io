@@ -76,6 +76,6 @@ Windows MSYS2 UCRT64 用户可以安装所需依赖：
 如果电脑安装了 MinGW UCRT64，可直接构建：
 
 ```powershell
-gcc -std=c17 -O2 -DSQLITE_HAS_CODEC -IC:/msys64/ucrt64/include/sqlcipher -mwindows src/desktop_main.c src/security.c -o build/finance_desktop.exe -LC:/msys64/ucrt64/lib -lsqlcipher -lcrypto -lcomctl32
-gcc -std=c17 -O2 -DSQLITE_HAS_CODEC -IC:/msys64/ucrt64/include/sqlcipher src/main.c src/security.c -o campus_finance.exe -LC:/msys64/ucrt64/lib -lsqlcipher -lcrypto -lws2_32
+gcc -std=c17 -O2 -DSQLITE_HAS_CODEC -IC:/msys64/ucrt64/include/sqlcipher -mwindows src/desktop_main.c src/security.c src/money.c -o build/finance_desktop.exe -LC:/msys64/ucrt64/lib -lsqlcipher -lcrypto -lcomctl32
+gcc -std=c17 -O2 -DSQLITE_HAS_CODEC -IC:/msys64/ucrt64/include/sqlcipher src/main.c src/security.c src/money.c -o campus_finance.exe -LC:/msys64/ucrt64/lib -lsqlcipher -lcrypto -lws2_32
 ```
