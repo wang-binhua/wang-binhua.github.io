@@ -39,11 +39,15 @@ Windows MSYS2 UCRT64 用户可以安装所需依赖：
 | `GET` / `POST` | `/api/transactions` | 查询或新增账目 |
 | `PUT` / `DELETE` | `/api/transactions/{id}` | 编辑或删除账目 |
 | `GET` | `/api/dashboard?month=YYYY-MM` | 读取月度汇总、分类支出及目前可支配金额 |
-| `PUT` | `/api/balance` | 设置当前可支配金额（JSON：`{"amount":1234.56}`） |
+| `PUT` | `/api/balance` | 设置当前可支配金额（JSON：`{"amountCents":123456}`，金额单位为分） |
 | `GET` / `PUT` | `/api/budgets?month=YYYY-MM` | 读取或更新分类预算 |
 | `GET` | `/api/export?month=YYYY-MM` | 下载当月 CSV |
 
 后续值得做的扩展：按天趋势图、CSV 导入、月度变化率、自动备份、测试和 GitHub Actions。
+
+写入交易、余额和预算时，API 使用整数 `amountCents`，例如 `1234.56` 元传为 `123456` 分。数据库和金额写入路径均使用整数分；显示和 CSV 导出时才格式化为元。
+
+新增/编辑账目请求示例：`{"date":"2026-10-10","type":"expense","categoryId":1,"amountCents":12345,"note":"午餐"}`；设置预算请求示例：`{"month":"2026-10","categoryId":1,"amountCents":12345}`。金额最多为 `10000000` 元；支出/收入必须大于零，余额和预算可以为零。
 
 ## Windows 桌面版
 
