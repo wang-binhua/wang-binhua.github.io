@@ -6,11 +6,27 @@ let categories = [];
 let records = [];
 let editingId = null;
 let authMode = 'login';
+const maximumMoneyCents = 1000000000;
 
 $('#date').value = today;
 $('#month').value = today.slice(0, 7);
 
 const yuan = (amount) => `¥${Number(amount).toFixed(2)}`;
+function parseMoneyCents(value, allowZero = true) {
+  const text = String(value).trim();
+  if (!/^\d{1,8}(?:\.\d{1,2})?$/.test(text)) {
+    throw new Error('金额最多填写两位小数。');
+  }
+  const [whole, fraction = ''] = text.split('.');
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  if (!Number.isSafeInteger(cents) || cents > maximumMoneyCents ||
+      (!allowZero && cents === 0)) {
+    throw new Error(allowZero
+      ? '金额必须在 0 到 10000000 元之间。'
+      : '金额必须大于 0 且不超过 10000000 元。');
+  }
+  return cents;
+}
 const escapeHtml = (text) => String(text).replace(/[&<>]/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;'
 }[char]));
@@ -95,7 +111,7 @@ function renderRows(items) {
 
 function renderBudgets(items) {
   $('#budgets').innerHTML = items.map((item) =>
-    `<label class="budget">${escapeHtml(item.category)}<input data-id="${item.categoryId}" type="number" min="0" step="1" value="${item.amount}"></label>`
+    `<label class="budget">${escapeHtml(item.category)}<input data-id="${item.categoryId}" type="number" min="0" max="10000000" step="0.01" value="${item.amount}"></label>`
   ).join('');
 }
 
@@ -143,14 +159,14 @@ document.querySelectorAll('[data-type]').forEach((button) => button.onclick = ()
 
 $('#form').onsubmit = async (event) => {
   event.preventDefault();
-  const payload = {
-    date: $('#date').value,
-    type: kind,
-    categoryId: Number($('#category').value),
-    amount: Number($('#amount').value),
-    note: $('#note').value
-  };
   try {
+    const payload = {
+      date: $('#date').value,
+      type: kind,
+      categoryId: Number($('#category').value),
+      amountCents: parseMoneyCents($('#amount').value, false),
+      note: $('#note').value
+    };
     await api(editingId ? `/api/transactions/${editingId}` : '/api/transactions', {
       method: editingId ? 'PUT' : 'POST', body: JSON.stringify(payload)
     });
@@ -167,7 +183,7 @@ $('#save').onclick = async () => {
   const month = $('#month').value;
   try {
     await Promise.all([...document.querySelectorAll('#budgets input')].map((input) =>
-      api('/api/budgets', { method: 'PUT', body: JSON.stringify({ month, categoryId: Number(input.dataset.id), amount: Number(input.value) }) })
+      api('/api/budgets', { method: 'PUT', body: JSON.stringify({ month, categoryId: Number(input.dataset.id), amountCents: parseMoneyCents(input.value) }) })
     ));
     await load();
   } catch (error) { alert(error.message); }
@@ -176,13 +192,9 @@ $('#save').onclick = async () => {
 $('#setBalance').onclick = async () => {
   const value = prompt('请输入现在实际可支配的总金额（元）。已有账目将作为当前余额基准，不会再次扣减；之后新增的收入和支出会自动计入。');
   if (value === null) return;
-  if (!/^\d{1,8}(?:\.\d{1,2})?$/.test(value.trim()) ||
-      !Number.isFinite(Number(value)) || Number(value) > 10000000) {
-    alert('请输入 0 到 10000000 之间、最多两位小数的金额。');
-    return;
-  }
   try {
-    await api('/api/balance', { method: 'PUT', body: JSON.stringify({ amount: Number(value) }) });
+    const amountCents = parseMoneyCents(value);
+    await api('/api/balance', { method: 'PUT', body: JSON.stringify({ amountCents }) });
     await load();
   } catch (error) { alert(error.message); }
 };
