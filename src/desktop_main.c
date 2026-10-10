@@ -5,6 +5,7 @@
 #include <commctrl.h>
 #include <sqlite3.h>
 #include "security.h"
+#include "money.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -190,6 +191,15 @@ static void wide_to_utf8(const wchar_t *wide, char *utf8, int size) {
     WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, size, NULL, NULL);
 }
 static void text_of(HWND control, wchar_t *text, int length) { GetWindowTextW(control, text, length); }
+static int parse_money_control(HWND control, int64_t minimum_cents,
+                               int64_t maximum_cents, int64_t *cents) {
+    wchar_t wide[64];
+    char text[256];
+    text_of(control, wide, 64);
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1,
+                            text, sizeof text, NULL, NULL) <= 0) return 0;
+    return money_parse_yuan(text, minimum_cents, maximum_cents, cents);
+}
 static void message(const wchar_t *text) { MessageBoxW(NULL, text, L"校园财务台", MB_OK | MB_ICONINFORMATION); }
 static void now_text(wchar_t *out, int length) {
     time_t current=time(NULL); struct tm local; localtime_s(&local, &current);
@@ -247,12 +257,15 @@ static void refresh_summary(void) {
 }
 
 static void set_current_balance(void) {
-    wchar_t value[64];text_of(balance_edit,value,64);wchar_t *end=NULL;double amount=wcstod(value,&end);
-    if(end==value||*end||!isfinite(amount)||amount<0||amount>10000000){message(L"请输入 0 到 10000000 之间的有效金额。");return;}
+    int64_t amount_cents = 0;
+    if (!parse_money_control(balance_edit, 0, INT64_C(1000000000), &amount_cents)) {
+        message(L"请输入 0 到 10000000 之间、最多两位小数的有效金额。");
+        return;
+    }
     sqlite3_stmt *st=NULL;
     const char *sql="UPDATE balance_state SET amount_cents=?,through_transaction_id=(SELECT COALESCE(MAX(id),0) FROM transactions) WHERE id=1";
     if(sqlite3_prepare_v2(db,sql,-1,&st,NULL)!=SQLITE_OK){message(L"无法准备余额保存操作。");return;}
-    sqlite3_bind_int64(st,1,(sqlite3_int64)(amount*100+0.5));
+    sqlite3_bind_int64(st,1,amount_cents);
     int ok=sqlite3_step(st)==SQLITE_DONE&&sqlite3_changes(db)==1;sqlite3_finalize(st);
     if(!ok){message(L"余额保存失败，请重试。");return;}
     refresh_summary();
@@ -286,12 +299,22 @@ static int ensure_category(void) {
 }
 
 static void save_transaction(int update) {
-    wchar_t moment_w[32],amount_w[32],note_w[300]; text_of(time_edit,moment_w,32);text_of(amount_edit,amount_w,32);text_of(note_edit,note_w,300);
+    wchar_t moment_w[32],note_w[300]; text_of(time_edit,moment_w,32);text_of(note_edit,note_w,300);
     if(wcslen(moment_w)!=16 || moment_w[4]!=L'-' || moment_w[7]!=L'-' || moment_w[10]!=L' ' || moment_w[13]!=L':'){message(L"时间格式请使用 YYYY-MM-DD HH:MM。");return;}
-    double amount=wcstod(amount_w,NULL); int category=ensure_category(); if(amount<=0||!category){message(L"请填写正确的金额和类别。");return;}
+    int64_t amount_cents = 0;
+    wchar_t amount_w[64];
+    text_of(amount_edit, amount_w, 64);
+    char amount_text[256];
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, amount_w, -1,
+                            amount_text, sizeof amount_text, NULL, NULL) <= 0 ||
+        !money_parse_yuan(amount_text, 1, INT64_C(1000000000), &amount_cents)) {
+        message(L"请输入 0.01 到 10000000 之间、最多两位小数的有效金额。");
+        return;
+    }
+    int category=ensure_category(); if(!category){message(L"请填写正确的金额和类别。");return;}
     char moment[40],note[900],date[16];wide_to_utf8(moment_w,moment,sizeof moment);wide_to_utf8(note_w,note,sizeof note);memcpy(date,moment,10);date[10]=0;
     const char *sql=update?"UPDATE transactions SET record_date=?,record_time=?,type=?,category_id=?,amount_cents=?,note=? WHERE id=?":"INSERT INTO transactions(id,record_date,record_time,type,category_id,amount_cents,note) SELECT MAX(COALESCE((SELECT MAX(id) FROM transactions),0),through_transaction_id)+1,?,?,?,?,?,? FROM balance_state WHERE id=1";
-    sqlite3_stmt *st=NULL;sqlite3_prepare_v2(db,sql,-1,&st,NULL);sqlite3_bind_text(st,1,date,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,2,moment,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,3,selected_type(),-1,SQLITE_STATIC);sqlite3_bind_int(st,4,category);sqlite3_bind_int(st,5,(int)(amount*100+.5));sqlite3_bind_text(st,6,note,-1,SQLITE_TRANSIENT);if(update)sqlite3_bind_int(st,7,editing_id);
+    sqlite3_stmt *st=NULL;sqlite3_prepare_v2(db,sql,-1,&st,NULL);sqlite3_bind_text(st,1,date,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,2,moment,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,3,selected_type(),-1,SQLITE_STATIC);sqlite3_bind_int(st,4,category);sqlite3_bind_int64(st,5,amount_cents);sqlite3_bind_text(st,6,note,-1,SQLITE_TRANSIENT);if(update)sqlite3_bind_int(st,7,editing_id);
     int ok=sqlite3_step(st)==SQLITE_DONE;sqlite3_finalize(st);if(!ok){message(L"保存失败。请重试。");return;} editing_id=0;SetWindowTextW(amount_edit,L"");SetWindowTextW(note_edit,L"");refresh_list();
 }
 
@@ -301,7 +324,38 @@ static void edit_selected(void) {
 }
 
 static void delete_selected(void) {int row=ListView_GetNextItem(list_view,-1,LVNI_SELECTED);if(row<0){message(L"请先选择一笔账目。");return;}if(MessageBoxW(NULL,L"确定删除这笔账目？",L"确认",MB_YESNO|MB_ICONWARNING)!=IDYES)return;LVITEMW item={.mask=LVIF_PARAM,.iItem=row};ListView_GetItem(list_view,&item);sqlite3_stmt *st=NULL;sqlite3_prepare_v2(db,"DELETE FROM transactions WHERE id=?",-1,&st,NULL);sqlite3_bind_int(st,1,(int)item.lParam);sqlite3_step(st);sqlite3_finalize(st);refresh_list();}
-static void save_budget(void){char month[16];selected_month(month,sizeof month);int category=ensure_category();wchar_t value[32];text_of(budget_edit,value,32);double amount=wcstod(value,NULL);if(!category||amount<0){message(L"请选择类别并填写非负预算。");return;}sqlite3_stmt *st=NULL;sqlite3_prepare_v2(db,"INSERT INTO budgets(month,category_id,amount_cents) VALUES(?,?,?) ON CONFLICT(month,category_id) DO UPDATE SET amount_cents=excluded.amount_cents",-1,&st,NULL);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,2,category);sqlite3_bind_int(st,3,(int)(amount*100+.5));sqlite3_step(st);sqlite3_finalize(st);refresh_summary();}
+static void save_budget(void) {
+    char month[16];
+    selected_month(month, sizeof month);
+    int64_t amount_cents = 0;
+    if (!parse_money_control(budget_edit, 0, INT64_C(1000000000), &amount_cents)) {
+        message(L"请输入 0 到 10000000 之间、最多两位小数的预算。");
+        return;
+    }
+    int category = ensure_category();
+    if (!category) {
+        message(L"请选择类别并填写有效预算。");
+        return;
+    }
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "INSERT INTO budgets(month,category_id,amount_cents) VALUES(?,?,?) "
+        "ON CONFLICT(month,category_id) DO UPDATE SET amount_cents=excluded.amount_cents";
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK) {
+        message(L"无法准备预算保存操作。");
+        return;
+    }
+    sqlite3_bind_text(st, 1, month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, category);
+    sqlite3_bind_int64(st, 3, amount_cents);
+    int ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    if (!ok) {
+        message(L"预算保存失败，请重试。");
+        return;
+    }
+    refresh_summary();
+}
 static void csv_write_field(FILE *file,const char *value){const unsigned char *first=(const unsigned char*)value;while(*first==' '||*first=='\t'||*first=='\r'||*first=='\n')first++;bool formula=*first=='='||*first=='+'||*first=='-'||*first=='@';fputc('"',file);if(formula)fputc('\'',file);for(const unsigned char *p=(const unsigned char*)value;*p;p++){if(*p=='"')fputc('"',file);fputc(*p,file);}fputc('"',file);}
 static void export_csv(void){char month[16],file[64];selected_month(month,sizeof month);snprintf(file,sizeof file,"finance-%s.csv",month);FILE *f=fopen(file,"wb");if(!f){message(L"无法创建 CSV 文件。");return;}fprintf(f,"date,time,type,category,amount,note\n");sqlite3_stmt *st=NULL;sqlite3_prepare_v2(db,"SELECT t.record_date,t.record_time,t.type,c.name,t.amount_cents,t.note FROM transactions t JOIN categories c ON c.id=t.category_id WHERE substr(t.record_time,1,7)=? ORDER BY t.record_time",-1,&st,NULL);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);while(sqlite3_step(st)==SQLITE_ROW){csv_write_field(f,(const char*)sqlite3_column_text(st,0));fputc(',',f);csv_write_field(f,(const char*)sqlite3_column_text(st,1));fputc(',',f);csv_write_field(f,(const char*)sqlite3_column_text(st,2));fputc(',',f);csv_write_field(f,(const char*)sqlite3_column_text(st,3));fprintf(f,",%.2f,",sqlite3_column_int(st,4)/100.0);csv_write_field(f,(const char*)sqlite3_column_text(st,5));fputc('\n',f);}sqlite3_finalize(st);bool ok=!ferror(f);if(fclose(f)!=0)ok=false;message(ok?L"已在程序目录导出 CSV 文件。":L"CSV 导出未能完整写入，请检查磁盘空间和权限。");}
 

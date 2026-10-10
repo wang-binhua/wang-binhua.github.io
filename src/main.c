@@ -11,6 +11,7 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include "security.h"
+#include "money.h"
 #include <time.h>
 
 #ifdef _WIN32
@@ -73,6 +74,12 @@ static bool json_number(const char *body, const char *key, double *value) {
     const char *p=strstr(body, mark); char *end;
     if (!p || !(p=strchr(p+strlen(mark), ':'))) return false;
     *value=strtod(p+1,&end); return end != p+1;
+}
+static bool json_integer(const char *body, const char *key, int64_t *value) {
+    char mark[80]; snprintf(mark, sizeof mark, "\"%s\"", key);
+    const char *p = strstr(body, mark);
+    if (!p || !(p = strchr(p + strlen(mark), ':'))) return false;
+    return money_parse_json_integer(p + 1, value);
 }
 static void query(const Request *r, const char *key, char *out, size_t cap) {
     out[0]=0; size_t len=strlen(key); const char *p=r->query;
@@ -469,10 +476,10 @@ static void current_balance(socket_t s) {
     json(s, 200, body);
 }
 static void set_current_balance(socket_t s, const Request *r) {
-    double amount = 0;
-    if (!json_number(r->body, "amount", &amount) || !isfinite(amount) ||
-        amount < 0 || amount > 10000000) {
-        error(s, 400, "Balance must be between 0 and 10000000.");
+    int64_t amount_cents = 0;
+    if (!json_integer(r->body, "amountCents", &amount_cents) ||
+        amount_cents < 0 || amount_cents > INT64_C(1000000000)) {
+        error(s, 400, "amountCents must be an integer from 0 to 1000000000.");
         return;
     }
     sqlite3_stmt *st = NULL;
@@ -483,7 +490,7 @@ static void set_current_balance(socket_t s, const Request *r) {
         error(s, 500, "Could not prepare balance update.");
         return;
     }
-    sqlite3_bind_int64(st, 1, (sqlite3_int64)(amount * 100 + 0.5));
+    sqlite3_bind_int64(st, 1, amount_cents);
     int ok = sqlite3_step(st) == SQLITE_DONE && sqlite3_changes(database) == 1;
     sqlite3_finalize(st);
     if (!ok) {
@@ -492,13 +499,130 @@ static void set_current_balance(socket_t s, const Request *r) {
     }
     current_balance(s);
 }
-static void add_transaction(socket_t s,const Request *r){char date[16],type[16],note[500];double cat,amount;if(!json_text(r->body,"date",date,sizeof date)||!json_text(r->body,"type",type,sizeof type)||!json_number(r->body,"categoryId",&cat)||!json_number(r->body,"amount",&amount)||!date_ok(date)||(strcmp(type,"income")&&strcmp(type,"expense"))||cat<1||amount<=0||amount>10000000){error(s,400,"invalid transaction");return;}if(!json_text(r->body,"note",note,sizeof note))note[0]=0;sqlite3_stmt *st;const char *sql="INSERT INTO transactions(id,record_date,type,category_id,amount_cents,note) SELECT MAX(COALESCE((SELECT MAX(id) FROM transactions),0),through_transaction_id)+1,?,?,?,?,? FROM balance_state WHERE id=1 AND EXISTS(SELECT 1 FROM categories WHERE id=? AND type=?)";sqlite3_prepare_v2(database,sql,-1,&st,0);sqlite3_bind_text(st,1,date,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,2,type,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,3,(int)cat);sqlite3_bind_int(st,4,(int)(amount*100+.5));sqlite3_bind_text(st,5,note,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,6,(int)cat);sqlite3_bind_text(st,7,type,-1,SQLITE_TRANSIENT);if(sqlite3_step(st)!=SQLITE_DONE||sqlite3_changes(database)!=1){sqlite3_finalize(st);error(s,400,"category type does not match");return;}int id=(int)sqlite3_last_insert_rowid(database);sqlite3_finalize(st);char out[64];snprintf(out,sizeof out,"{\"id\":%d}",id);json(s,201,out);}
-static void update_transaction(socket_t s,const Request *r){char *end;long id=strtol(r->path+18,&end,10);char date[16],type[16],note[500];double cat,amount;if(id<1||*end||!json_text(r->body,"date",date,sizeof date)||!json_text(r->body,"type",type,sizeof type)||!json_number(r->body,"categoryId",&cat)||!json_number(r->body,"amount",&amount)||!date_ok(date)||(strcmp(type,"income")&&strcmp(type,"expense"))||cat<1||amount<=0||amount>10000000){error(s,400,"invalid transaction");return;}if(!json_text(r->body,"note",note,sizeof note))note[0]=0;sqlite3_stmt *st;const char *sql="UPDATE transactions SET record_date=?,type=?,category_id=?,amount_cents=?,note=? WHERE id=? AND EXISTS(SELECT 1 FROM categories WHERE id=? AND type=?)";sqlite3_prepare_v2(database,sql,-1,&st,0);sqlite3_bind_text(st,1,date,-1,SQLITE_TRANSIENT);sqlite3_bind_text(st,2,type,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,3,(int)cat);sqlite3_bind_int(st,4,(int)(amount*100+.5));sqlite3_bind_text(st,5,note,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,6,(int)id);sqlite3_bind_int(st,7,(int)cat);sqlite3_bind_text(st,8,type,-1,SQLITE_TRANSIENT);if(sqlite3_step(st)!=SQLITE_DONE){sqlite3_finalize(st);error(s,500,"could not update transaction");return;}int changed=sqlite3_changes(database);sqlite3_finalize(st);if(!changed){error(s,404,"transaction not found or category mismatch");return;}json(s,200,"{\"ok\":true}");}
+static void add_transaction(socket_t s, const Request *r) {
+    char date[16], type[16], note[500];
+    double category_id = 0;
+    int64_t amount_cents = 0;
+    if (!json_text(r->body, "date", date, sizeof date) ||
+        !json_text(r->body, "type", type, sizeof type) ||
+        !json_number(r->body, "categoryId", &category_id) ||
+        !json_integer(r->body, "amountCents", &amount_cents) ||
+        !date_ok(date) || (strcmp(type, "income") && strcmp(type, "expense")) ||
+        category_id < 1 || amount_cents <= 0 || amount_cents > INT64_C(1000000000)) {
+        error(s, 400, "invalid transaction; amountCents must be integer cents");
+        return;
+    }
+    if (!json_text(r->body, "note", note, sizeof note)) note[0] = 0;
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "INSERT INTO transactions(id,record_date,type,category_id,amount_cents,note) "
+        "SELECT MAX(COALESCE((SELECT MAX(id) FROM transactions),0),through_transaction_id)+1,"
+        "?,?,?,?,? FROM balance_state WHERE id=1 AND "
+        "EXISTS(SELECT 1 FROM categories WHERE id=? AND type=?)";
+    if (sqlite3_prepare_v2(database, sql, -1, &st, NULL) != SQLITE_OK) {
+        error(s, 500, "could not prepare transaction");
+        return;
+    }
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 3, (int)category_id);
+    sqlite3_bind_int64(st, 4, amount_cents);
+    sqlite3_bind_text(st, 5, note, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 6, (int)category_id);
+    sqlite3_bind_text(st, 7, type, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) != SQLITE_DONE || sqlite3_changes(database) != 1) {
+        sqlite3_finalize(st);
+        error(s, 400, "category type does not match");
+        return;
+    }
+    int id = (int)sqlite3_last_insert_rowid(database);
+    sqlite3_finalize(st);
+    char out[64];
+    snprintf(out, sizeof out, "{\"id\":%d}", id);
+    json(s, 201, out);
+}
+
+static void update_transaction(socket_t s, const Request *r) {
+    char *end;
+    long id = strtol(r->path + 18, &end, 10);
+    char date[16], type[16], note[500];
+    double category_id = 0;
+    int64_t amount_cents = 0;
+    if (id < 1 || *end ||
+        !json_text(r->body, "date", date, sizeof date) ||
+        !json_text(r->body, "type", type, sizeof type) ||
+        !json_number(r->body, "categoryId", &category_id) ||
+        !json_integer(r->body, "amountCents", &amount_cents) ||
+        !date_ok(date) || (strcmp(type, "income") && strcmp(type, "expense")) ||
+        category_id < 1 || amount_cents <= 0 || amount_cents > INT64_C(1000000000)) {
+        error(s, 400, "invalid transaction; amountCents must be integer cents");
+        return;
+    }
+    if (!json_text(r->body, "note", note, sizeof note)) note[0] = 0;
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "UPDATE transactions SET record_date=?,type=?,category_id=?,amount_cents=?,note=? "
+        "WHERE id=? AND EXISTS(SELECT 1 FROM categories WHERE id=? AND type=?)";
+    if (sqlite3_prepare_v2(database, sql, -1, &st, NULL) != SQLITE_OK) {
+        error(s, 500, "could not prepare transaction update");
+        return;
+    }
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 3, (int)category_id);
+    sqlite3_bind_int64(st, 4, amount_cents);
+    sqlite3_bind_text(st, 5, note, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 6, (int)id);
+    sqlite3_bind_int(st, 7, (int)category_id);
+    sqlite3_bind_text(st, 8, type, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) != SQLITE_DONE) {
+        sqlite3_finalize(st);
+        error(s, 500, "could not update transaction");
+        return;
+    }
+    int changed = sqlite3_changes(database);
+    sqlite3_finalize(st);
+    if (!changed) {
+        error(s, 404, "transaction not found or category mismatch");
+        return;
+    }
+    json(s, 200, "{\"ok\":true}");
+}
 static void export_csv(socket_t s,const Request *r){char month[16];query(r,"month",month,sizeof month);if(!month_ok(month)){error(s,400,"valid month required");return;}sqlite3_stmt *st;sqlite3_prepare_v2(database,"SELECT t.record_date,t.type,c.name,t.amount_cents,t.note FROM transactions t JOIN categories c ON c.id=t.category_id WHERE substr(t.record_date,1,7)=? ORDER BY t.record_date,t.id",-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);char out[RESPONSE_MAX];size_t at=0;append(out,sizeof out,&at,"date,type,category,amount,note\n");while(sqlite3_step(st)==SQLITE_ROW){const char *date=(const char*)sqlite3_column_text(st,0);const char *type=(const char*)sqlite3_column_text(st,1);const char *category=(const char*)sqlite3_column_text(st,2);const char *note=(const char*)sqlite3_column_text(st,4);csv_field(out,sizeof out,&at,date);append(out,sizeof out,&at,",%s,",type);csv_field(out,sizeof out,&at,category);append(out,sizeof out,&at,",%.2f,",sqlite3_column_int(st,3)/100.0);csv_field(out,sizeof out,&at,note);append(out,sizeof out,&at,"\n");}sqlite3_finalize(st);reply(s,200,"text/csv",out,at);}
 static void remove_transaction(socket_t s,const char *path){char *end;long id=strtol(path+18,&end,10);if(id<1||*end){error(s,400,"invalid transaction id");return;}sqlite3_stmt *st;sqlite3_prepare_v2(database,"DELETE FROM transactions WHERE id=?",-1,&st,0);sqlite3_bind_int(st,1,(int)id);sqlite3_step(st);int changed=sqlite3_changes(database);sqlite3_finalize(st);if(!changed){error(s,404,"transaction not found");return;}reply(s,204,"application/json",0,0);}
 static void dashboard(socket_t s,const Request *r){char month[16];query(r,"month",month,sizeof month);if(!month_ok(month)){error(s,400,"valid month required");return;}long income=0,expense=0,budget=0;sqlite3_stmt *st;sqlite3_prepare_v2(database,"SELECT type,SUM(amount_cents) FROM transactions WHERE substr(record_date,1,7)=? GROUP BY type",-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);while(sqlite3_step(st)==SQLITE_ROW){if(!strcmp((const char*)sqlite3_column_text(st,0),"income"))income=sqlite3_column_int(st,1);else expense=sqlite3_column_int(st,1);}sqlite3_finalize(st);sqlite3_prepare_v2(database,"SELECT COALESCE(SUM(amount_cents),0) FROM budgets WHERE month=?",-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);if(sqlite3_step(st)==SQLITE_ROW)budget=sqlite3_column_int(st,0);sqlite3_finalize(st);sqlite3_int64 available=0;const char *balance_sql="SELECT b.amount_cents+COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount_cents ELSE -t.amount_cents END),0) FROM balance_state b LEFT JOIN transactions t ON t.id>b.through_transaction_id WHERE b.id=1";if(sqlite3_prepare_v2(database,balance_sql,-1,&st,0)!=SQLITE_OK||sqlite3_step(st)!=SQLITE_ROW){sqlite3_finalize(st);error(s,500,"Could not calculate current balance.");return;}available=sqlite3_column_int64(st,0);sqlite3_finalize(st);const char *sql="SELECT c.id,c.name,SUM(t.amount_cents) FROM transactions t JOIN categories c ON c.id=t.category_id WHERE substr(t.record_date,1,7)=? AND t.type='expense' GROUP BY c.id,c.name ORDER BY 3 DESC";sqlite3_prepare_v2(database,sql,-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);char out[RESPONSE_MAX];size_t at=0;append(out,sizeof out,&at,"{\"income\":%.2f,\"expense\":%.2f,\"balance\":%.2f,\"availableBalance\":%.2f,\"budget\":%.2f,\"categories\":[",income/100.,expense/100.,(income-expense)/100.,available/100.,budget/100.);bool first=true;while(sqlite3_step(st)==SQLITE_ROW){char n[256];escape_json(n,sizeof n,(const char*)sqlite3_column_text(st,1));append(out,sizeof out,&at,"%s{\"id\":%d,\"name\":\"%s\",\"amount\":%.2f}",first?"":",",sqlite3_column_int(st,0),n,sqlite3_column_int(st,2)/100.);first=false;}sqlite3_finalize(st);append(out,sizeof out,&at,"]}");json(s,200,out);}
 static void budgets(socket_t s,const Request *r){char month[16];query(r,"month",month,sizeof month);if(!month_ok(month)){error(s,400,"valid month required");return;}sqlite3_stmt *st;const char *sql="SELECT c.id,c.name,COALESCE(b.amount_cents,0) FROM categories c LEFT JOIN budgets b ON b.category_id=c.id AND b.month=? WHERE c.type='expense' ORDER BY c.name";sqlite3_prepare_v2(database,sql,-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);char out[RESPONSE_MAX];size_t at=0;append(out,sizeof out,&at,"{\"budgets\":[");bool first=true;while(sqlite3_step(st)==SQLITE_ROW){char n[256];escape_json(n,sizeof n,(const char*)sqlite3_column_text(st,1));append(out,sizeof out,&at,"%s{\"categoryId\":%d,\"category\":\"%s\",\"amount\":%.2f}",first?"":",",sqlite3_column_int(st,0),n,sqlite3_column_int(st,2)/100.);first=false;}sqlite3_finalize(st);append(out,sizeof out,&at,"]}");json(s,200,out);}
-static void save_budget(socket_t s,const Request *r){char month[16];double cat,amount;if(!json_text(r->body,"month",month,sizeof month)||!json_number(r->body,"categoryId",&cat)||!json_number(r->body,"amount",&amount)||!month_ok(month)||cat<1||amount<0){error(s,400,"invalid budget");return;}sqlite3_stmt *st;sqlite3_prepare_v2(database,"INSERT INTO budgets(month,category_id,amount_cents) VALUES(?,?,?) ON CONFLICT(month,category_id) DO UPDATE SET amount_cents=excluded.amount_cents",-1,&st,0);sqlite3_bind_text(st,1,month,-1,SQLITE_TRANSIENT);sqlite3_bind_int(st,2,(int)cat);sqlite3_bind_int(st,3,(int)(amount*100+.5));int ok=sqlite3_step(st)==SQLITE_DONE;sqlite3_finalize(st);if(!ok){error(s,500,"could not save budget");return;}json(s,200,"{\"ok\":true}");}
+static void save_budget(socket_t s, const Request *r) {
+    char month[16];
+    double category_id = 0;
+    int64_t amount_cents = 0;
+    if (!json_text(r->body, "month", month, sizeof month) ||
+        !json_number(r->body, "categoryId", &category_id) ||
+        !json_integer(r->body, "amountCents", &amount_cents) ||
+        !month_ok(month) || category_id < 1 || amount_cents < 0 ||
+        amount_cents > INT64_C(1000000000)) {
+        error(s, 400, "invalid budget; amountCents must be integer cents");
+        return;
+    }
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "INSERT INTO budgets(month,category_id,amount_cents) VALUES(?,?,?) "
+        "ON CONFLICT(month,category_id) DO UPDATE SET amount_cents=excluded.amount_cents";
+    if (sqlite3_prepare_v2(database, sql, -1, &st, NULL) != SQLITE_OK) {
+        error(s, 500, "could not prepare budget");
+        return;
+    }
+    sqlite3_bind_text(st, 1, month, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, (int)category_id);
+    sqlite3_bind_int64(st, 3, amount_cents);
+    int ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    if (!ok) {
+        error(s, 500, "could not save budget");
+        return;
+    }
+    json(s, 200, "{\"ok\":true}");
+}
 
 static void static_file(socket_t s,const char *path){const char *file=!strcmp(path,"/")?"web/index.html":!strcmp(path,"/app.css")?"web/app.css":!strcmp(path,"/app.js")?"web/app.js":0;if(!file){error(s,404,"route not found");return;}FILE *f=fopen(file,"rb");if(!f){error(s,404,"web asset not found; run from project directory");return;}char data[RESPONSE_MAX];size_t n=fread(data,1,sizeof data,f);fclose(f);reply(s,200,strstr(file,".css")?"text/css":strstr(file,".js")?"application/javascript":"text/html",data,n);}
 static void route(socket_t s,const Request *r) {
