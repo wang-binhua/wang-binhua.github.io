@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <meta name="description" content="Campus Finance：一个使用 C、Win32、SQLCipher 和 Web 技术构建的本地个人记账项目。">
+  <title>校园财务台 · Wang Binhua</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="校园财务台首页">
+      <span class="brand-mark" aria-hidden="true">CF</span>
+      <span>Campus Finance</span>
+    </a>
+    <a class="top-link" href="https://github.com/wang-binhua/wang-binhua.github.io">GitHub 仓库 <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow">个人项目 · 持续学习与维护</p>
+      <h1>校园财务台</h1>
+      <p class="subtitle">Campus Finance</p>
+      <p class="intro">
+        一个面向个人日常记账的 Windows 桌面与本机 Web 项目。
+        记录收支、查看历史和月度变化，并把账本数据保存在本机。
+      </p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/wang-binhua/wang-binhua.github.io">查看源码 <span aria-hidden="true">↗</span></a>
+        <a class="button secondary" href="#details">了解项目</a>
+      </div>
+      <p class="notice">这是项目介绍页，不提供在线记账服务。应用默认只监听本机地址，账本不会托管在此网站上。</p>
+    </section>
+
+    <section class="section" aria-labelledby="features-title">
+      <div class="section-heading">
+        <p class="eyebrow">WHAT IT DOES</p>
+        <h2 id="features-title">从日常记录到月度回顾</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="card">
+          <span class="card-index">01</span>
+          <h3>收支与历史</h3>
+          <p>记录收入、支出、类别、时间和备注；查询历史账目并按月导出 CSV。</p>
+        </article>
+        <article class="card">
+          <span class="card-index">02</span>
+          <h3>预算与余额</h3>
+          <p>按类别设置月度预算，并以余额快照为基准累计之后的收入与支出。</p>
+        </article>
+        <article class="card">
+          <span class="card-index">03</span>
+          <h3>桌面与本机网页</h3>
+          <p>提供原生 Windows 桌面界面和本机 Web 界面；两者使用本机账本数据。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section details" id="details" aria-labelledby="details-title">
+      <div class="section-heading">
+        <p class="eyebrow">UNDER THE HOOD</p>
+        <h2 id="details-title">项目技术</h2>
+      </div>
+      <div class="details-grid">
+        <div class="detail-panel">
+          <h3>技术栈</h3>
+          <ul class="tag-list" aria-label="技术栈">
+            <li>C17</li><li>Win32 API</li><li>SQLite / SQLCipher</li>
+            <li>OpenSSL</li><li>HTTP / JSON</li><li>HTML · CSS · JavaScript</li>
+            <li>CMake</li><li>CTest</li>
+          </ul>
+        </div>
+        <div class="detail-panel">
+          <h3>工程实践</h3>
+          <ul class="practice-list">
+            <li>数据库凭据与账本分离保存，账本使用 SQLCipher 加密。</li>
+            <li>本机服务限制回环地址，并对数据接口执行认证和请求来源校验。</li>
+            <li>使用独立临时数据库编写安全与功能回归测试。</li>
+            <li>通过 CMake 构建桌面程序和本机 Web 服务。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="learning-note">这是一个持续学习与维护中的个人项目。欢迎查看源码、构建说明和测试代码。</p>
+    </section>
+
+    <section class="closing">
+      <div>
+        <p class="eyebrow">SOURCE CODE</p>
+        <h2>代码、构建与测试说明都在 GitHub</h2>
+      </div>
+      <a class="button light" href="https://github.com/wang-binhua/wang-binhua.github.io">打开项目仓库 <span aria-hidden="true">↗</span></a>
+    </section>
+  </main>
+
+  <footer>
+    <span>Wang Binhua</span>
+    <span>Campus Finance · C / Win32 / SQLCipher</span>
+  </footer>
+</body>
+</html>

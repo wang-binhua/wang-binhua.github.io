@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.20)
+project(campus_finance LANGUAGES C)
+
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_path(SQLCIPHER_INCLUDE_DIR sqlite3.h PATH_SUFFIXES sqlcipher REQUIRED)
+find_library(SQLCIPHER_LIBRARY NAMES sqlcipher REQUIRED)
+
+add_library(finance_security src/security.c)
+target_include_directories(finance_security PUBLIC ${SQLCIPHER_INCLUDE_DIR})
+target_compile_definitions(finance_security PUBLIC SQLITE_HAS_CODEC)
+target_link_libraries(finance_security PUBLIC ${SQLCIPHER_LIBRARY} OpenSSL::Crypto)
+
+add_executable(campus_finance src/main.c)
+target_link_libraries(campus_finance PRIVATE finance_security)
+if(WIN32)
+  target_link_libraries(campus_finance PRIVATE ws2_32)
+  add_executable(finance_desktop WIN32 src/desktop_main.c)
+  target_link_libraries(finance_desktop PRIVATE finance_security comctl32)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(finance_security_smoke tests/security_smoke.c)
+  target_link_libraries(finance_security_smoke PRIVATE finance_security)
+  add_test(NAME finance_security_smoke COMMAND finance_security_smoke)
+endif()

@@ -1,0 +1,17 @@
+/build/
+/data/
+/dist/
+*.db
+*.db-*
+*.bin
+*.exe
+*.dll
+*.a
+*.obj
+*.tmp
+*.bak
+*.wal
+*.shm
+*.journal
+*.csv
+.env
